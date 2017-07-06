@@ -64,6 +64,19 @@
 
 using namespace std;
 
+class Timer
+{
+public:
+	Timer() { restart(); }
+
+	std::chrono::high_resolution_clock::duration duration() const { return std::chrono::high_resolution_clock::now() - m_t; }
+	double elapsed() const { return std::chrono::duration_cast<std::chrono::microseconds>(duration()).count() / 1000000.0; }
+	void restart() { m_t = std::chrono::high_resolution_clock::now(); }
+
+private:
+	std::chrono::high_resolution_clock::time_point m_t;
+};
+
 unsigned const ethash_cl_miner::c_defaultLocalWorkSize = 64;
 unsigned const ethash_cl_miner::c_defaultGlobalWorkSizeMultiplier = 4096; // * CL_DEFAULT_LOCAL_WORK_SIZE
 
@@ -368,7 +381,9 @@ bool ethash_cl_miner::init(
 		}
 		// create context
 		m_context = cl::Context(vector<cl::Device>(&device, &device + 1));
-		m_queue = cl::CommandQueue(m_context, device);
+		//m_queue = cl::CommandQueue(m_context, device);
+		m_queue = cl::CommandQueue(m_context, device, CL_QUEUE_PROFILING_ENABLE);
+
 
 		// make sure that global work size is evenly divisible by the local workgroup size
 		m_globalWorkSize = s_initialGlobalWorkSize;
@@ -481,6 +496,9 @@ void ethash_cl_miner::search(uint8_t const* header, uint64_t target, search_hook
 {
 	try
 	{
+		Timer workSwitchTimer;
+		bool enableSwitchTimer = false;
+		
 		queue<pending_batch> pending;
 
 		// this can't be a static because in MacOSX OpenCL implementation a segfault occurs when a static is passed to OpenCL functions
@@ -502,6 +520,8 @@ void ethash_cl_miner::search(uint8_t const* header, uint64_t target, search_hook
 		// pass these to stop the compiler unrolling the loops
 		m_searchKernel.setArg(4, target);
 		
+		Timer kernelExecTimer;
+			
 		unsigned buf = 0;
 		random_device engine;
 		uint64_t start_nonce;
@@ -509,6 +529,14 @@ void ethash_cl_miner::search(uint8_t const* header, uint64_t target, search_hook
 		else start_nonce = uniform_int_distribution<uint64_t>()(engine);
 		for (;; start_nonce += m_globalWorkSize)
 		{
+			if (enableSwitchTimer) {
+				auto switchElapsed = workSwitchTimer.elapsed();
+				// time elapsed between start of work update and continuation of the kernel loop
+				printf("time taken to switch work: %f u \n", switchElapsed * 1000000);
+				enableSwitchTimer = false;
+			}
+			kernelExecTimer.restart();
+			
 			// supply output buffer to kernel
 			m_searchKernel.setArg(0, m_searchBuffer[buf]);
 			m_searchKernel.setArg(3, start_nonce);
@@ -532,7 +560,7 @@ void ethash_cl_miner::search(uint8_t const* header, uint64_t target, search_hook
 				for (unsigned i = 0; i != num_found; ++i)
 					nonces[i] = batch.start_nonce + results[i + 1];
 
-				m_queue.enqueueUnmapMemObject(m_searchBuffer[batch.buf], results);				
+				m_queue.enqueueUnmapMemObject(m_searchBuffer[batch.buf], results);
 				//bool exit = num_found && hook.found(nonces, num_found);
 				// should not exit when a nonce is found.
 				// instead, continue mining on the same header
@@ -547,6 +575,11 @@ void ethash_cl_miner::search(uint8_t const* header, uint64_t target, search_hook
 				bool pendingNewWork = hook.searched(batch.start_nonce, m_globalWorkSize);
 
 				if (pendingNewWork) {
+					ETHCL_LOG("new work is pending. fetching...");
+					enableSwitchTimer = true;
+					ETHCL_LOG("restarting workSwitch timer.");
+					workSwitchTimer.restart();
+					
 					JobForGPU new_work = hook.getNewWork();
 					
 					// routine below is copy/pasted from above
@@ -576,6 +609,9 @@ void ethash_cl_miner::search(uint8_t const* header, uint64_t target, search_hook
 
 				pending.pop();
 			}
+			
+			auto kernelExecElapsed = kernelExecTimer.elapsed();
+			printf("kernel execution time: %f u \n", kernelExecElapsed * 1000000);
 		}
 
 		// not safe to return until this is ready
