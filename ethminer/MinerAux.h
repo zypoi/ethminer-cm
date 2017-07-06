@@ -770,7 +770,7 @@ private:
 			f.start("opencl", false);
 		else if (_m == MinerType::CUDA)
 			f.start("cuda", false);
-		EthashProofOfWork::WorkPackage current;
+		WorkPackage current;
 		std::mutex x_current;
 		while (m_running)
 			try
