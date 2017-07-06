@@ -64,6 +64,19 @@
 
 using namespace std;
 
+class Timer
+{
+public:
+	Timer() { restart(); }
+
+	std::chrono::high_resolution_clock::duration duration() const { return std::chrono::high_resolution_clock::now() - m_t; }
+	double elapsed() const { return std::chrono::duration_cast<std::chrono::microseconds>(duration()).count() / 1000000.0; }
+	void restart() { m_t = std::chrono::high_resolution_clock::now(); }
+
+private:
+	std::chrono::high_resolution_clock::time_point m_t;
+};
+
 unsigned const ethash_cl_miner::c_defaultLocalWorkSize = 64;
 unsigned const ethash_cl_miner::c_defaultGlobalWorkSizeMultiplier = 4096; // * CL_DEFAULT_LOCAL_WORK_SIZE
 
@@ -477,10 +490,14 @@ typedef struct
 	unsigned buf;
 } pending_batch;
 
+Timer updateWorkTimer;
+
 void ethash_cl_miner::search(uint8_t const* header, uint64_t target, search_hook& hook, bool _ethStratum, uint64_t _startN)
 {
 	try
 	{
+		auto updateElapsed = updateWorkTimer.elapsed();
+		printf("Time elapsed to switch work: %f u \n", updateElapsed * 1000000);
 		queue<pending_batch> pending;
 
 		// this can't be a static because in MacOSX OpenCL implementation a segfault occurs when a static is passed to OpenCL functions
@@ -502,6 +519,8 @@ void ethash_cl_miner::search(uint8_t const* header, uint64_t target, search_hook
 		// pass these to stop the compiler unrolling the loops
 		m_searchKernel.setArg(4, target);
 		
+		Timer kernelExecTimer;
+		
 		unsigned buf = 0;
 		random_device engine;
 		uint64_t start_nonce;
@@ -509,6 +528,8 @@ void ethash_cl_miner::search(uint8_t const* header, uint64_t target, search_hook
 		else start_nonce = uniform_int_distribution<uint64_t>()(engine);
 		for (;; start_nonce += m_globalWorkSize)
 		{
+			kernelExecTimer.restart();
+			
 			// supply output buffer to kernel
 			m_searchKernel.setArg(0, m_searchBuffer[buf]);
 			m_searchKernel.setArg(3, start_nonce);
@@ -535,8 +556,12 @@ void ethash_cl_miner::search(uint8_t const* header, uint64_t target, search_hook
 				m_queue.enqueueUnmapMemObject(m_searchBuffer[batch.buf], results);
 				bool exit = num_found && hook.found(nonces, num_found);
 				exit |= hook.searched(batch.start_nonce, m_globalWorkSize); // always report searched before exit
-				if (exit)
+				if (exit) {
+					printf("exiting search thread. starting updateWorkTimer..");
+					updateWorkTimer.restart();
 					break;
+				}
+
 
 				// reset search buffer if we're still going
 				if (num_found)
@@ -544,6 +569,10 @@ void ethash_cl_miner::search(uint8_t const* header, uint64_t target, search_hook
 
 				pending.pop();
 			}
+			
+			// TODO: average kernel timer over 100 executions
+			auto kernelExecElapsed = kernelExecTimer.elapsed();
+			printf("kernel execution time: %f u \n", kernelExecElapsed * 1000000);
 		}
 
 		// not safe to return until this is ready
