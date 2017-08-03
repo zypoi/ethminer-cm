@@ -30,8 +30,8 @@ public:
 
 	bool isRunning() { return m_running; }
 	bool isConnected() { return m_connected && m_authorized; }
-	h256 currentHeaderHash() { return m_current.header; }
-	bool current() { return static_cast<bool>(m_current); }
+	h256 currentHeaderHash() { return m_current->header; }
+	bool current() { return m_current != nullptr; }
 	unsigned waitState() { return m_waitState; }
 	bool submit(Solution solution);
 	void reconnect();
@@ -66,8 +66,8 @@ private:
 
 	Farm* p_farm;
 	mutex x_current;
-	WorkPackage m_current;
-	WorkPackage m_previous;
+	std::shared_ptr<const WorkPackage> m_current;
+	std::shared_ptr<const WorkPackage> m_previous;
 
 	bool m_stale = false;
 

@@ -148,13 +148,13 @@ public:
 
 	virtual ~Miner() = default;
 
-	void setWork(WorkPackage const& _work)
+	void setWork(std::shared_ptr<const WorkPackage> _work)
 	{
-		{
-			Guard l(x_work);
-			m_work = _work;
-			workSwitchStart = std::chrono::high_resolution_clock::now();
-		}
+		m_work = std::move(_work);
+
+		// FIXME: Data race.
+		workSwitchStart = std::chrono::high_resolution_clock::now();
+
 		pause();
 		kickOff();
 		m_hashCount = 0;
@@ -177,7 +177,7 @@ protected:
 	 */
 	virtual void pause() = 0;
 
-	WorkPackage work() const { Guard l(x_work); return m_work; }
+	std::shared_ptr<const WorkPackage> work() const { return m_work; }
 
 	void addHashCount(uint64_t _n) { m_hashCount += _n; }
 
@@ -193,8 +193,7 @@ protected:
 private:
 	uint64_t m_hashCount = 0;
 
-	WorkPackage m_work;
-	mutable Mutex x_work;
+	std::shared_ptr<const WorkPackage> m_work;
 };
 
 }

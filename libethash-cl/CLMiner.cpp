@@ -127,30 +127,28 @@ void CLMiner::workLoop()
 	uint64_t startNonce = 0;
 
 	// The work package currently processed by GPU.
-	WorkPackage current;
-	current.header = h256{1u};
-	current.seed = h256{1u};
+	std::shared_ptr<const WorkPackage> current;
 
 	try {
 		while (true)
 		{
-			const WorkPackage w = work();
+			std::shared_ptr<const WorkPackage> w = work();
 
-			if (current.header != w.header)
+			if (!w)
+			{
+				cllog << "No work. Pause for 3 s.";
+				std::this_thread::sleep_for(std::chrono::seconds(3));
+				continue;
+			}
+
+			if (!current || current->header != w->header)
 			{
 				// New work received. Update GPU data.
 				auto localSwitchStart = std::chrono::high_resolution_clock::now();
 
-				if (!w)
-				{
-					cllog << "No work. Pause for 3 s.";
-					std::this_thread::sleep_for(std::chrono::seconds(3));
-					continue;
-				}
+				cllog << "New work: header" << w->header << "target" << w->boundary.hex();
 
-				cllog << "New work: header" << w.header << "target" << w.boundary.hex();
-
-				if (current.seed != w.seed)
+				if (!current || current->seed != w->seed)
 				{
 					if (s_dagLoadMode == DAG_LOAD_MODE_SEQUENTIAL)
 					{
@@ -159,28 +157,28 @@ void CLMiner::workLoop()
 						++s_dagLoadIndex;
 					}
 
-					cllog << "New seed" << w.seed;
-					init(w.seed);
+					cllog << "New seed" << w->seed;
+					init(w->seed);
 				}
 
 				// Upper 64 bits of the boundary.
-				const uint64_t target = (uint64_t)(u64)((u256)w.boundary >> 192);
+				const uint64_t target = (uint64_t)(u64)((u256)w->boundary >> 192);
 				assert(target > 0);
 
 				// Update header constant buffer.
-				m_queue.enqueueWriteBuffer(m_header, CL_FALSE, 0, w.header.size, w.header.data());
+				m_queue.enqueueWriteBuffer(m_header, CL_FALSE, 0, w->header.size, w->header.data());
 				m_queue.enqueueWriteBuffer(m_searchBuffer, CL_FALSE, 0, sizeof(c_zero), &c_zero);
 
 				m_searchKernel.setArg(0, m_searchBuffer);  // Supply output buffer to kernel.
 				m_searchKernel.setArg(4, target);
 
 				// FIXME: This logic should be move out of here.
-				if (w.exSizeBits >= 0)
-					startNonce = w.startNonce | ((uint64_t)index << (64 - 4 - w.exSizeBits)); // This can support up to 16 devices.
+				if (w->exSizeBits >= 0)
+					startNonce = w->startNonce | ((uint64_t)index << (64 - 4 - w->exSizeBits)); // This can support up to 16 devices.
 				else
 					startNonce = randomNonce();
 
-				current = w;
+				current = std::move(w);
 				auto switchEnd = std::chrono::high_resolution_clock::now();
 				auto globalSwitchTime = std::chrono::duration_cast<std::chrono::milliseconds>(switchEnd - workSwitchStart).count();
 				auto localSwitchTime = std::chrono::duration_cast<std::chrono::microseconds>(switchEnd - localSwitchStart).count();
@@ -211,7 +209,7 @@ void CLMiner::workLoop()
 			// Report results while the kernel is running.
 			// It takes some time because ethash must be re-evaluated on CPU.
 			if (nonce != 0)
-				report(nonce, current);
+				report(nonce, *current);
 
 			// Report hash count
 			addHashCount(m_globalWorkSize);

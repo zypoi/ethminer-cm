@@ -88,9 +88,7 @@ struct WorkPackage
 		boundary(_bh.boundary()),
 		header(_bh.hashWithout()),
 		seed(EthashAux::seedHash(static_cast<unsigned>(_bh.number())))
-	{ }
-	void reset() { header = h256(); }
-	explicit operator bool() const { return header != h256(); }
+	{}
 
 	h256 boundary;
 	h256 header;	///< When h256() means "pause until notified a new work package is available".

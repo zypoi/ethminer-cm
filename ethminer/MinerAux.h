@@ -618,7 +618,7 @@ private:
 			f.start("opencl", false);
 		else if (_m == MinerType::CUDA)
 			f.start("cuda", false);
-		f.setWork(WorkPackage{genesis});
+		f.setWork(std::make_shared<WorkPackage>(genesis));
 
 		map<uint64_t, WorkingProgress> results;
 		uint64_t mean = 0;
@@ -685,7 +685,7 @@ private:
 
 		int time = 0;
 
-		WorkPackage current = WorkPackage(genesis);
+		auto current = std::make_shared<const WorkPackage>(genesis);
 		f.setWork(current);
 		while (true) {
 			bool completed = false;
@@ -705,7 +705,7 @@ private:
 				time++;
 			}
 			cnote << "Difficulty:" << difficulty << "  Nonce:" << solution.nonce;
-			if (EthashAux::eval(current.seed, current.header, solution.nonce).value < current.boundary)
+			if (EthashAux::eval(current->seed, current->header, solution.nonce).value < current->boundary)
 			{
 				cnote << "SUCCESS: GPU gave correct result!";
 			}
@@ -720,12 +720,14 @@ private:
 			genesis.setDifficulty(u256(1) << difficulty);
 			genesis.noteDirty();
 
-			current.header = h256::random();
-			current.boundary = genesis.boundary();
+			auto w = std::make_shared<WorkPackage>();
+			w->header = h256::random();
+			w->boundary = genesis.boundary();
 			minelog << "Generated random work package:";
-			minelog << "  Header-hash:" << current.header.hex();
-			minelog << "  Seedhash:" << current.seed.hex();
-			minelog << "  Target: " << h256(current.boundary).hex();
+			minelog << "  Header-hash:" << w->header.hex();
+			minelog << "  Seedhash:" << w->seed.hex();
+			minelog << "  Target: " << h256(w->boundary).hex();
+			current = std::move(w);
 			f.setWork(current);
 
 		}
@@ -758,8 +760,7 @@ private:
 			f.start("opencl", false);
 		else if (_m == MinerType::CUDA)
 			f.start("cuda", false);
-		WorkPackage current;
-		std::mutex x_current;
+		std::shared_ptr<const WorkPackage> current;
 		while (m_running)
 			try
 			{
@@ -775,7 +776,7 @@ private:
 					auto mp = f.miningProgress();
 					f.resetMiningProgress();
 					if (current)
-						minelog << "Mining on" << current.header << ": " << mp << f.getSolutionStats();
+						minelog << "Mining on" << current->header << ": " << mp << f.getSolutionStats();
 					else
 						minelog << "Getting work package...";
 
@@ -795,15 +796,15 @@ private:
 					h256 hh(v[0].asString());
 					h256 newSeedHash(v[1].asString());
 
-					if (hh != current.header)
+					if (hh != current->header)
 					{
-						x_current.lock();
-						current.header = hh;
-						current.seed = newSeedHash;
-						current.boundary = h256(fromHex(v[2].asString()), h256::AlignRight);
-						minelog << "Got work package: #" + current.header.hex().substr(0,8);
+						auto w = std::make_shared<WorkPackage>();
+						w->header = hh;
+						w->seed = newSeedHash;
+						w->boundary = h256(fromHex(v[2].asString()), h256::AlignRight);
+						minelog << "Got work package" << w->header;
+						current = std::move(w);
 						f.setWork(current);
-						x_current.unlock();
 					}
 					this_thread::sleep_for(chrono::milliseconds(_recheckPeriod));
 				}

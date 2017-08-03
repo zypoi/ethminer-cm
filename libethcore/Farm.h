@@ -58,14 +58,11 @@ public:
 	 * @brief Sets the current mining mission.
 	 * @param _wp The work package we wish to be mining.
 	 */
-	void setWork(WorkPackage const& _wp)
+	void setWork(std::shared_ptr<const WorkPackage> const& _w)
 	{
 		Guard l(x_minerWork);
-		if (_wp.header == m_work.header && _wp.startNonce == m_work.startNonce)
-			return;
-		m_work = _wp;
 		for (auto const& m: m_miners)
-			m->setWork(m_work);
+			m->setWork(_w);
 		resetTimer();
 	}
 
@@ -195,8 +192,6 @@ public:
 	 */
 	void onSolutionFound(SolutionFound const& _handler) { m_onSolutionFound = _handler; }
 
-	WorkPackage work() const { Guard l(x_minerWork); return m_work; }
-
 private:
 	/**
 	 * @brief Called from a Miner to note a WorkPackage has a solution.
@@ -217,7 +212,6 @@ private:
 
 	mutable Mutex x_minerWork;
 	std::vector<std::shared_ptr<Miner>> m_miners;
-	WorkPackage m_work;
 
 	std::atomic<bool> m_isMining = {false};
 
