@@ -15,6 +15,17 @@ add_custom_target(clbin2h DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/CLMiner_kernel.h $
 
 set(SOURCES
 	CLMiner.h CLMiner.cpp
+	CLASM_generic.h
+	CLASM_hawaii.h
+	CLASM_fiji.h
+	CLASM_tahiti.h
+	CLASM_pitcarin.h
+	CLASM_tonga1.h
+	CLASM_tonga2.h
+	CLASM_ellesmere1.h
+	CLASM_ellesmere2.h
+	CLASM_baffin.h
+	CLASM_vega.h
 	${CMAKE_CURRENT_BINARY_DIR}/CLMiner_kernel.h
 )
 

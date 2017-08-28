@@ -109,8 +109,8 @@ function(createBuildInfo)
 endfunction()
 
 
-hunter_add_package(Boost COMPONENTS system)
-find_package(Boost CONFIG REQUIRED COMPONENTS system)
+hunter_add_package(Boost COMPONENTS system regex)
+find_package(Boost CONFIG REQUIRED COMPONENTS system regex)
 
 hunter_add_package(jsoncpp)
 find_package(jsoncpp CONFIG REQUIRED)

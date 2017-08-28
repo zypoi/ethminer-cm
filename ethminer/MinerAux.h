@@ -261,6 +261,17 @@ public:
 					break;
 				}
 			}
+		else if ((arg == "--eth-intensity" || arg == "-eint") && i + 1 < argc) {
+			try {
+				m_ethereumAsmIntensity = stol(argv[++i]);
+			}
+			catch (...)
+			{
+				cerr << "Bad " << arg << " option: " << argv[i] << endl;
+				BOOST_THROW_EXCEPTION(BadArgument());
+			}
+		}
+
 #endif
 #if ETH_ETHASHCL || ETH_ETHASHCUDA
 		else if ((arg == "--cl-global-work" || arg == "--cuda-grid-size")  && i + 1 < argc)
@@ -283,6 +294,10 @@ public:
 			}
 		else if (arg == "--list-devices")
 			m_shouldListDevices = true;
+		else if ((arg == "--optimize" || arg == "-asv") && i + 1 < argc) {
+			m_optimizationKernel = stol(argv[++i]);
+			m_optimizationKernel = m_optimizationKernel < 0 ? 0 : (m_optimizationKernel >= 4 ? 4 : m_optimizationKernel);
+		}
 #endif
 #if ETH_ETHASHCUDA
 		else if (arg == "--cuda-devices")
@@ -476,7 +491,9 @@ public:
 					m_openclPlatform,
 					0,
 					m_dagLoadMode,
-					m_dagCreateDevice
+					m_dagCreateDevice,
+					m_optimizationKernel,
+					m_ethereumAsmIntensity
 				))
 				exit(1);
 			CLMiner::setNumInstances(m_miningThreads);
@@ -515,7 +532,7 @@ public:
 		if (mode == OperationMode::Benchmark)
 			doBenchmark(m_minerType, m_benchmarkWarmup, m_benchmarkTrial, m_benchmarkTrials);
 		else if (mode == OperationMode::Farm)
-			doFarm(m_minerType, m_activeFarmURL, m_farmRecheckPeriod);
+			doFarm(m_minerType, m_activeFarmURL, m_farmRecheckPeriod); 
 		else if (mode == OperationMode::Simulation)
 			doSimulation(m_minerType);
 #if ETH_STRATUM
@@ -750,16 +767,19 @@ private:
 		::FarmClient rpcFailover(failoverClient);
 
 		FarmClient * prpc = &rpc;
-
+		
 		h256 id = h256::random();
 		Farm f;
 		f.setSealers(sealers);
+		
+		
 		if (_m == MinerType::CL)
 			f.start("opencl", false);
 		else if (_m == MinerType::CUDA)
 			f.start("cuda", false);
 		WorkPackage current;
 		std::mutex x_current;
+
 		while (m_running)
 			try
 			{
@@ -981,6 +1001,8 @@ private:
 #if ETH_ETHASHCL
 	unsigned m_openclDeviceCount = 0;
 	unsigned m_openclDevices[16];
+	unsigned m_ethereumAsmIntensity = 8;
+	unsigned m_optimizationKernel = 1;
 #if !ETH_ETHASHCUDA
 	unsigned m_globalWorkSizeMultiplier = CLMiner::c_defaultGlobalWorkSizeMultiplier;
 	unsigned m_localWorkSize = CLMiner::c_defaultLocalWorkSize;

@@ -12,6 +12,7 @@ add_executable(${EXECUTABLE} ${SRC_LIST} ${HEADERS})
 
 add_dependencies(${EXECUTABLE} BuildInfo.h)
 
+target_link_libraries(${EXECUTABLE} ${Boost_LIBRARIES})
 target_link_libraries(${EXECUTABLE} ethcore)
 target_link_libraries(${EXECUTABLE} ethash)
 target_link_libraries(${EXECUTABLE} devcore libjson-rpc-cpp::client)
