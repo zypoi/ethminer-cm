@@ -554,8 +554,10 @@ bool CLMiner::init(const h256& seed)
 
 		if(m_useAsmKernel)
 			this->detectAmdGpu(gpu_name, &binary_ptr, &binary_size, s_asmVersion);
+		
+		vector<unsigned char> bin_data(binary_ptr, binary_ptr + binary_size);
 
-		cl::Program::Binaries binaries{ { binary_ptr, binary_size} };
+		cl::Program::Binaries binaries{{ bin_data } };
 		cl::Program asmProgram; 
 		if (m_useAsmKernel) {
 			cl::Program program(m_context, { device }, binaries);
