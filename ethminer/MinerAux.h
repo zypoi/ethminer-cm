@@ -282,6 +282,10 @@ public:
 			}
 			catch (...)
 			{
+				cerr << "Bad " << arg << " option: " << argv[i] << endl;
+				BOOST_THROW_EXCEPTION(BadArgument());
+			}
+		}
 		else if(arg == "--cl-threads-per-hash" && i + 1 < argc) {
 			try {
 				m_openclThreadsPerHash = stol(argv[++i]);
