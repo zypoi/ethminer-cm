@@ -33,7 +33,6 @@ unsigned CLMiner::s_workgroupSize = CLMiner::c_defaultLocalWorkSize;
 unsigned CLMiner::s_initialGlobalWorkSize = CLMiner::c_defaultGlobalWorkSizeMultiplier * CLMiner::c_defaultLocalWorkSize;
 unsigned CLMiner::s_asmVersion = 0;
 unsigned CLMiner::s_ethIntensity = 8; 
-unsigned CLMiner::s_threadsPerHash = 8;
 
 constexpr size_t c_maxSearchResults = 1;
 
@@ -531,7 +530,6 @@ bool CLMiner::init(const h256& seed)
 		addDefinition(code, "MAX_OUTPUTS", c_maxSearchResults);
 		addDefinition(code, "PLATFORM", platformId);
 		addDefinition(code, "COMPUTE", computeCapability);
-		addDefinition(code, "THREADS_PER_HASH", s_threadsPerHash);
 
 		// create miner OpenCL program
 		
