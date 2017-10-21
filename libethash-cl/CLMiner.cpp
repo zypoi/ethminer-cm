@@ -7,6 +7,9 @@
 #include <libethash/internal.h>
 #include "CLMiner_kernel.h"
 
+#include <boost/regex.hpp>
+#include <json/json.h>
+
 using namespace dev;
 using namespace eth;
 
@@ -175,6 +178,11 @@ void CLMiner::workLoop()
 				m_searchKernel.setArg(0, m_searchBuffer);  // Supply output buffer to kernel.
 				m_searchKernel.setArg(4, target);
 
+				if (m_useAsmKernel) {
+					m_asmSearchKernel.setArg(m_kernelArgs.m_searchBufferArg, m_searchBuffer);
+					m_asmSearchKernel.setArg(m_kernelArgs.m_targetArg, target);
+				}
+
 				// FIXME: This logic should be move out of here.
 				if (w.exSizeBits >= 0)
 					startNonce = w.startNonce | ((uint64_t)index << (64 - 4 - w.exSizeBits)); // This can support up to 16 devices.
@@ -206,8 +214,14 @@ void CLMiner::workLoop()
 			startNonce += m_globalWorkSize;
 
 			// Run the kernel.
-			m_searchKernel.setArg(3, startNonce);
-			m_queue.enqueueNDRangeKernel(m_searchKernel, cl::NullRange, m_globalWorkSize, m_workgroupSize);
+			if (m_useAsmKernel) {
+				m_asmSearchKernel.setArg(m_kernelArgs.m_startNonceArg, startNonce);
+				m_queue.enqueueNDRangeKernel(m_asmSearchKernel, cl::NullRange, m_globalWorkSize, m_workgroupSize);
+			}
+			else {
+				m_searchKernel.setArg(3, startNonce);
+				m_queue.enqueueNDRangeKernel(m_searchKernel, cl::NullRange, m_globalWorkSize, m_workgroupSize);
+			}
 
 			// Report results while the kernel is running.
 			// It takes some time because ethash must be re-evaluated on CPU.
@@ -340,6 +354,174 @@ bool CLMiner::configureGPU(
 	return false;
 }
 
+bool CLMiner::loadBinaryKernel(string platform, cl::Device device, uint32_t dagSize128, uint32_t lightSize64, int platformId, int computeCapability, char *options)
+{
+	string device_name = device.getInfo<CL_DEVICE_NAME>();
+	std::ifstream kernel_list("kernels.json");
+
+	Json::Reader json_reader;
+	Json::Value root;
+
+	if (!kernel_list.good()) return false;
+	if (!json_reader.parse(kernel_list, root)){
+		kernel_list.close();
+		cllog << "Parse error in kernel list!";
+		return false;
+	}
+
+	kernel_list.close();
+	
+	for (auto itr = root.begin(); itr != root.end(); itr++)
+	{
+		auto key = itr.key();
+		cllog << key;
+		
+		string dkey = key.asString();
+		boost::regex expr(dkey);
+
+		if(boost::regex_match(device_name, expr)) {
+			Json::Value droot = root[dkey];
+			std::ifstream kernel_file; 
+
+			std::vector<std::string> kparams = {
+				"path", "binary", "kernel_name",
+				"max_solutions", "returns_mix", "args"
+			};
+
+			std::vector<string> args = { 
+				"searchBuffer", "header", "dag", 
+				"startNonce", "target", "isolate", 
+				"dagSize" 
+			};
+			
+			/* verify all kernel parameters */
+			for (auto p : kparams) {
+				if (!droot.isMember(p)) {
+					cllog << "Kernel definition" << dkey << "missing key" << p << "\"!";
+					return false;
+				}
+			}
+			for (auto p : args) {
+				if (!droot["args"].isMember(p)) {
+					cllog << "Kernel definition" << dkey << "missing argument key" << p << "!";
+					return false;
+				}
+			}
+
+			/* If we have a text kernel, we don't need dag size, but if it's binary, it NEEDS to be fed in*/
+			if (!droot["args"].isMember("dagSize") && root[dkey]["binary"].asBool()) {
+				cllog << "Kernel for " << device_name << " is a binary, but doesn't take dagSize argument! Bad kernels.json";
+				return false;
+			}
+
+			/* Claymore's kernels need both of these */
+			if (droot["args"].isMember("factorExp") != droot["args"].isMember("factorDenom")) {
+				return false;
+			}
+
+			/* Start loading the kernel */
+			kernel_file.open(
+				root[dkey]["path"].asString(),
+				ios::in | ios::binary
+			);
+
+			if (!kernel_file.good()) {
+				cwarn << "Couldn't load kernel binary: " << root[dkey]["path"].asString();
+				return false;
+			}
+
+			/* if it's a binary kernel */
+			if (root[dkey]["binary"].asBool()) {
+				vector<unsigned char> bin_data;
+
+				kernel_file.unsetf(std::ios::skipws);
+				bin_data.insert(bin_data.begin(),
+					std::istream_iterator<unsigned char>(kernel_file),
+					std::istream_iterator<unsigned char>());
+
+				/* Setup the program */
+				cl::Program::Binaries blobs({bin_data});
+				cl::Program program(m_context, { device }, blobs);
+				try
+				{
+					program.build({ device }, options);
+					cllog << "Build info success:" << program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(device);
+					m_asmSearchKernel = cl::Kernel(program, droot["kernel_name"].asString().c_str());
+				}
+				catch (cl::Error const&)
+				{
+					cwarn << "Build info:" << program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(device);
+					return false;
+				}
+
+			}
+			else {
+				std::string kernel_ascii((std::istreambuf_iterator<char>(kernel_file)),
+										  std::istreambuf_iterator<char>());
+				
+				addDefinition(kernel_ascii, "GROUP_SIZE", m_workgroupSize);
+				addDefinition(kernel_ascii, "DAG_SIZE", dagSize128);
+				addDefinition(kernel_ascii, "LIGHT_SIZE", lightSize64);
+				addDefinition(kernel_ascii, "ACCESSES", ETHASH_ACCESSES);
+				addDefinition(kernel_ascii, "MAX_OUTPUTS", c_maxSearchResults);
+				addDefinition(kernel_ascii, "PLATFORM", platformId);
+				addDefinition(kernel_ascii, "COMPUTE", computeCapability);
+				addDefinition(kernel_ascii, "THREADS_PER_HASH", s_threadsPerHash);
+				
+				cl::Program::Sources sources{ { kernel_ascii.data(), kernel_ascii.size()} };
+				cl::Program program(m_context, sources);
+
+				try
+				{
+					program.build({ device }, options);
+					cllog << "Build info:" << program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(device);
+					m_asmSearchKernel = cl::Kernel(program, droot["kernel_name"].asCString());
+				}
+				catch (cl::Error const&)
+				{
+					cwarn << "Build failed!";
+					cwarn << "Build info:" << program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(device);
+					return false;
+				}
+
+			}
+
+			/* Load where each kernel param should be slotted into */
+			if (droot["args"].isMember("factorExp")) {
+				m_kernelArgs.m_factor1Arg = root[dkey]["args"]["factorExp"].asInt();
+				m_kernelArgs.m_factor2Arg = root[dkey]["args"]["factorDenom"].asInt();
+			}
+			if (droot["args"].isMember("dagSize")) {
+				m_kernelArgs.m_dagSize128Arg = root[dkey]["args"]["dagSize"].asInt();
+			}
+
+			// Load all the argument parameters for the ke
+			m_kernelArgs.m_searchBufferArg = root[dkey]["args"]["searchBuffer"].asUInt();
+			m_kernelArgs.m_headerArg       = root[dkey]["args"]["header"].asUInt();
+			m_kernelArgs.m_dagArg          = root[dkey]["args"]["dag"].asUInt();
+			m_kernelArgs.m_startNonceArg   = root[dkey]["args"]["startNonce"].asUInt();
+			m_kernelArgs.m_targetArg       = root[dkey]["args"]["target"].asUInt();
+			m_kernelArgs.m_isolateArg      = root[dkey]["args"]["isolate"].asUInt();
+
+			cllog << "Arguments";
+			cllog << m_kernelArgs.m_searchBufferArg;
+			cllog << m_kernelArgs.m_headerArg;
+			cllog << m_kernelArgs.m_dagArg;
+			cllog << m_kernelArgs.m_startNonceArg;
+			cllog << m_kernelArgs.m_targetArg;
+			cllog << m_kernelArgs.m_isolateArg;
+			cllog << m_kernelArgs.m_dagSize128Arg;
+
+			/* set max solutions */
+			m_maxSolutions                 = root[dkey]["args"]["max_solutions"].asUInt();
+
+
+			cllog << "Binary kernel loaded!";
+			return true;
+		}
+	}
+	return false;
+}
 
 bool CLMiner::init(const h256& seed)
 {
@@ -386,6 +568,7 @@ bool CLMiner::init(const h256& seed)
 		string device_version = device.getInfo<CL_DEVICE_VERSION>();
 		ETHCL_LOG("Device:   " << device.getInfo<CL_DEVICE_NAME>() << " / " << device_version);
 
+
 		string clVer = device_version.substr(7, 3);
 		if (clVer == "1.0" || clVer == "1.1")
 		{
@@ -428,6 +611,13 @@ bool CLMiner::init(const h256& seed)
 		uint64_t dagSize = ethash_get_datasize(light->light->block_number);
 		uint32_t dagSize128 = (unsigned)(dagSize / ETHASH_MIX_BYTES);
 		uint32_t lightSize64 = (unsigned)(light->data().size() / sizeof(node));
+
+		if (m_useAsmKernel) {
+			if (!loadBinaryKernel(platformName, device, dagSize128, lightSize64, platformId, computeCapability, options)) {
+				cllog << "Couldn't load kernel binaries, falling back to OpenCL kernel.";
+				m_useAsmKernel = false;
+			}
+		}
 
 		// patch source code
 		// note: CLMiner_kernel is simply ethash_cl_miner_kernel.cl compiled
@@ -483,6 +673,14 @@ bool CLMiner::init(const h256& seed)
 		m_searchKernel.setArg(2, m_dag);
 		m_searchKernel.setArg(5, ~0u);  // Pass this to stop the compiler unrolling the loops.
 
+		if (m_useAsmKernel) {
+			m_asmSearchKernel.setArg(m_kernelArgs.m_headerArg, m_header);
+			m_asmSearchKernel.setArg(m_kernelArgs.m_dagArg, m_dag);
+			m_asmSearchKernel.setArg(m_kernelArgs.m_isolateArg, ~0u);
+			if (m_kernelArgs.m_dagSize128Arg > 0) 
+				m_asmSearchKernel.setArg(m_kernelArgs.m_dagSize128Arg, dagSize128);
+		}
+
 		// create mining buffers
 		ETHCL_LOG("Creating mining buffer");
 		m_searchBuffer = cl::Buffer(m_context, CL_MEM_WRITE_ONLY, (c_maxSearchResults + 1) * sizeof(uint32_t));
@@ -505,7 +703,7 @@ bool CLMiner::init(const h256& seed)
 			m_queue.finish();
 			cllog << "DAG" << int(100.0f * i / fullRuns) << '%';
 		}
-
+		
 	}
 	catch (cl::Error const& err)
 	{

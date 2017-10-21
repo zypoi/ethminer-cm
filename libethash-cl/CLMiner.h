@@ -8,6 +8,8 @@
 #include <libdevcore/Worker.h>
 #include <libethcore/EthashAux.h>
 #include <libethcore/Miner.h>
+#include <iostream>
+#include <fstream>
 
 #define CL_USE_DEPRECATED_OPENCL_1_2_APIS true
 #define CL_HPP_ENABLE_EXCEPTIONS true
@@ -35,6 +37,23 @@ namespace dev
 {
 namespace eth
 {
+
+struct KernelSetup
+{
+	unsigned int m_searchBufferArg;
+	unsigned int m_headerArg;
+	unsigned int m_dagArg;
+	unsigned int m_startNonceArg;
+	unsigned int m_targetArg;
+	unsigned int m_isolateArg;
+	int m_factor1Arg;
+	int m_factor2Arg;
+	int m_dagSize128Arg;
+
+	KernelSetup() : m_searchBufferArg(0), m_headerArg(1), m_dagArg(2),
+		m_startNonceArg(3), m_targetArg(4), m_isolateArg(5),
+		m_factor1Arg(-1), m_factor2Arg(-1), m_dagSize128Arg(-1) {}
+};
 
 class CLMiner: public Miner
 {
@@ -78,10 +97,12 @@ private:
 	void report(uint64_t _nonce, WorkPackage const& _w);
 
 	bool init(const h256& seed);
+	bool loadBinaryKernel(string platform, cl::Device device, uint32_t dagSize128, uint32_t lightSize64, int platformId, int computeCapability, char *options);
 
 	cl::Context m_context;
 	cl::CommandQueue m_queue;
 	cl::Kernel m_searchKernel;
+	cl::Kernel m_asmSearchKernel;
 	cl::Kernel m_dagKernel;
 	cl::Buffer m_dag;
 	cl::Buffer m_light;
@@ -89,6 +110,13 @@ private:
 	cl::Buffer m_searchBuffer;
 	unsigned m_globalWorkSize = 0;
 	unsigned m_workgroupSize = 0;
+
+	KernelSetup m_kernelArgs;
+
+	bool m_useAsmKernel = true;
+	bool m_cpuValidateNonce = true;
+	bool m_clReportMixHash = false;
+	unsigned m_maxSolutions = 32;
 
 	static unsigned s_platformId;
 	static unsigned s_numInstances;

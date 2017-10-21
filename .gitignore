@@ -71,3 +71,4 @@ project.pbxproj
 doc/html
 *.autosave
 node_modules/
+*.log
