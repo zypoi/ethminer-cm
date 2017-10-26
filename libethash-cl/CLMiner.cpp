@@ -7,7 +7,7 @@
 #include <libethash/internal.h>
 #include "CLMiner_kernel.h"
 
-#include <boost/regex.hpp>
+#include <boost/algorithm/string.hpp>    
 #include <json/json.h>
 
 using namespace dev;
@@ -374,12 +374,9 @@ bool CLMiner::loadBinaryKernel(string platform, cl::Device device, uint32_t dagS
 	for (auto itr = root.begin(); itr != root.end(); itr++)
 	{
 		auto key = itr.key();
-		cllog << key;
 		
 		string dkey = key.asString();
-		boost::regex expr(dkey);
-
-		if(boost::regex_match(device_name, expr)) {
+		if(dkey == device_name) {
 			Json::Value droot = root[dkey];
 			std::ifstream kernel_file; 
 
@@ -495,6 +492,12 @@ bool CLMiner::loadBinaryKernel(string platform, cl::Device device, uint32_t dagS
 				m_kernelArgs.m_dagSize128Arg = root[dkey]["args"]["dagSize"].asInt();
 			}
 
+			/* */
+			if (droot.isMember("worksize") && droot["worksize"].asUInt64() != m_workgroupSize) {
+				cwarn << "Workgroup size patched";
+				m_workgroupSize = droot["worksize"].asUInt64();
+			}
+
 			// Load all the argument parameters for the ke
 			m_kernelArgs.m_searchBufferArg = root[dkey]["args"]["searchBuffer"].asUInt();
 			m_kernelArgs.m_headerArg       = root[dkey]["args"]["header"].asUInt();
@@ -502,15 +505,6 @@ bool CLMiner::loadBinaryKernel(string platform, cl::Device device, uint32_t dagS
 			m_kernelArgs.m_startNonceArg   = root[dkey]["args"]["startNonce"].asUInt();
 			m_kernelArgs.m_targetArg       = root[dkey]["args"]["target"].asUInt();
 			m_kernelArgs.m_isolateArg      = root[dkey]["args"]["isolate"].asUInt();
-
-			cllog << "Arguments";
-			cllog << m_kernelArgs.m_searchBufferArg;
-			cllog << m_kernelArgs.m_headerArg;
-			cllog << m_kernelArgs.m_dagArg;
-			cllog << m_kernelArgs.m_startNonceArg;
-			cllog << m_kernelArgs.m_targetArg;
-			cllog << m_kernelArgs.m_isolateArg;
-			cllog << m_kernelArgs.m_dagSize128Arg;
 
 			/* set max solutions */
 			m_maxSolutions                 = root[dkey]["args"]["max_solutions"].asUInt();
