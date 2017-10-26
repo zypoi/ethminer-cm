@@ -509,7 +509,6 @@ bool CLMiner::loadBinaryKernel(string platform, cl::Device device, uint32_t dagS
 			/* set max solutions */
 			m_maxSolutions                 = root[dkey]["args"]["max_solutions"].asUInt();
 
-
 			cllog << "Binary kernel loaded!";
 			return true;
 		}
