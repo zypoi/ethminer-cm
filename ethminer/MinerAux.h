@@ -102,7 +102,7 @@ public:
 			m_farmURL = argv[++i];
 			m_activeFarmURL = m_farmURL;
 		}
-		else if ((arg == "-FF" || arg == "-FS" || arg == "--farm-failover" || arg == "--stratum-failover") && i + 1 < argc)
+		else if ((arg == "-FF" || arg == "-SF" || arg == "-FS" || arg == "--farm-failover" || arg == "--stratum-failover") && i + 1 < argc)
 		{
 			string url = argv[++i];
 
@@ -243,6 +243,10 @@ public:
 		else if ((arg == "-RH" || arg == "--report-hashrate") && i + 1 < argc)
 		{
 			m_report_stratum_hashrate = true;
+		}
+		else if ((arg == "-HWMON") && i + 1 < argc)
+		{
+			m_show_hwmonitors = true;
 		}
 
 #endif
@@ -562,7 +566,7 @@ public:
 			<< "	--farm-retries <n> Number of retries until switch to failover (default: 3)" << endl
 #if ETH_STRATUM
 			<< "	-S, --stratum <host:port>  Put into stratum mode with the stratum server at host:port" << endl
-			<< "	-FS, --failover-stratum <host:port>  Failover stratum server at host:port" << endl
+			<< "	-SF, --stratum-failover <host:port>  Failover stratum server at host:port" << endl
 			<< "    -O, --userpass <username.workername:password> Stratum login credentials" << endl
 			<< "    -FO, --failover-userpass <username.workername:password> Failover stratum login credentials (optional, will use normal credentials when omitted)" << endl
 			<< "    --work-timeout <n> reconnect/failover after n seconds of working on the same (stratum) job. Defaults to 180. Don't set lower than max. avg. block time" << endl
@@ -572,6 +576,7 @@ public:
 			<< "        1: eth-proxy compatible: dwarfpool, f2pool, nanopool (required for hashrate reporting to work with nanopool)" << endl
 			<< "        2: EthereumStratum/1.0.0: nicehash" << endl
 			<< "    -RH, --report-hashrate Report current hashrate to pool (please only enable on pools supporting this)" << endl
+			<< "    -HWMON Displays gpu temp and fan percent." << endl
 			<< "    -SE, --stratum-email <s> Email address used in eth-proxy (optional)" << endl
 			<< "    --farm-recheck <n>  Leave n ms between checks for changed work (default: 500). When using stratum, use a high value (i.e. 2000) to get more stable hashrate output" << endl
 #endif
@@ -813,7 +818,7 @@ private:
 				});
 				for (unsigned i = 0; !completed; ++i)
 				{
-					auto mp = f.miningProgress();
+					auto mp = f.miningProgress(m_show_hwmonitors);
 					if (current)
 					{
 						minelog << mp << f.getSolutionStats() << f.farmLaunchedFormatted();
@@ -962,7 +967,7 @@ private:
 
 			while (client.isRunning())
 			{
-				auto mp = f.miningProgress();
+				auto mp = f.miningProgress(m_show_hwmonitors);
 				if (client.isConnected())
 				{
 					if (client.current())
@@ -1011,7 +1016,7 @@ private:
 
 			while (client.isRunning())
 			{
-				auto mp = f.miningProgress();
+				auto mp = f.miningProgress(m_show_hwmonitors);
 				if (client.isConnected())
 				{
 					if (client.current())
@@ -1084,6 +1089,7 @@ private:
 	unsigned m_defaultStratumFarmRecheckPeriod = 2000;
 	bool m_farmRecheckSet = false;
 	int m_worktimeout = 180;
+	bool m_show_hwmonitors = false;
 #if API_CORE
 	int m_api_port = 0;
 #endif	
