@@ -15,6 +15,7 @@
 #endif
 #include <iostream>
 #include <fstream>
+#include <queue>
 
 #define CL_USE_DEPRECATED_OPENCL_1_2_APIS true
 #define CL_HPP_ENABLE_EXCEPTIONS true
@@ -68,6 +69,9 @@ public:
 	static const unsigned c_defaultLocalWorkSize = 128;
 	/// Default value of the global work size as a multiplier of the local work size
 	static const unsigned c_defaultGlobalWorkSizeMultiplier = 8192;
+    /// Number of buffers to alternate between for the search kernels
+	static const unsigned c_bufferCount = 2; 
+
 
 	CLMiner(FarmFace& _farm, unsigned _index);
 	~CLMiner();
@@ -112,7 +116,7 @@ private:
 	cl::Buffer m_dag;
 	cl::Buffer m_light;
 	cl::Buffer m_header;
-	cl::Buffer m_searchBuffer;
+	cl::Buffer m_searchBuffer[c_bufferCount];
 	unsigned m_globalWorkSize = 0;
 	unsigned m_workgroupSize = 0;
 

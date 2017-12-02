@@ -123,12 +123,22 @@ uint64_t randomNonce()
 }
 }
 
+typedef struct 
+{
+	uint64_t startNonce;
+	unsigned buf;
+} pending_batch;
+
 void CLMiner::workLoop()
 {
 	// Memory for zero-ing buffers. Cannot be static because crashes on macOS.
 	uint32_t const c_zero = 0;
 
 	uint64_t startNonce = 0;
+	// uint32_t results[c_maxSearchResults + 1];
+
+	unsigned buf = 0;
+	queue<pending_batch> pending;
 
 	// The work package currently processed by GPU.
 	WorkPackage current;
@@ -173,13 +183,20 @@ void CLMiner::workLoop()
 
 				// Update header constant buffer.
 				m_queue.enqueueWriteBuffer(m_header, CL_FALSE, 0, w.header.size, w.header.data());
-				m_queue.enqueueWriteBuffer(m_searchBuffer, CL_FALSE, 0, sizeof(c_zero), &c_zero);
 
-				m_searchKernel.setArg(0, m_searchBuffer);  // Supply output buffer to kernel.
+				// The default batch is 0
+				buf = 0;
+
+				// Setup buffers for batches
+				for (unsigned i = 0; i != c_bufferCount; ++i)
+					m_queue.enqueueWriteBuffer(m_searchBuffer[i], false, 0, 4, &c_zero);
+
+				// 
+				m_searchKernel.setArg(0, m_searchBuffer[buf]);  // Supply output buffer to kernel.
 				m_searchKernel.setArg(4, target);
 
 				if (m_useAsmKernel) {
-					m_asmSearchKernel.setArg(m_kernelArgs.m_searchBufferArg, m_searchBuffer);
+					m_asmSearchKernel.setArg(m_kernelArgs.m_searchBufferArg, m_searchBuffer[buf]);
 					m_asmSearchKernel.setArg(m_kernelArgs.m_targetArg, target);
 				}
 
@@ -196,39 +213,54 @@ void CLMiner::workLoop()
 				cllog << "Switch time" << globalSwitchTime << "ms /" << localSwitchTime << "us";
 			}
 
-			// Read results.
-			// TODO: could use pinned host pointer instead.
-			uint32_t results[c_maxSearchResults + 1];
-			m_queue.enqueueReadBuffer(m_searchBuffer, CL_TRUE, 0, sizeof(results), &results);
-
-			uint64_t nonce = 0;
-			if (results[0] > 0)
-			{
-				// Ignore results except the first one.
-				nonce = startNonce + results[1];
-				// Reset search buffer if any solution found.
-				m_queue.enqueueWriteBuffer(m_searchBuffer, CL_FALSE, 0, sizeof(c_zero), &c_zero);
-			}
-
-			// Increase start nonce for following kernel execution.
-			startNonce += m_globalWorkSize;
-
-			// Run the kernel.
-			if (m_useAsmKernel) {
+			
+			// Setup output buffer for this run, as well as the starting nonce
+			// then execute the kernel
+			if(m_useAsmKernel) {
+				m_asmSearchKernel.setArg(0, m_searchBuffer[buf]);
+				m_asmSearchKernel.setArg(3, startNonce);
+				m_queue.enqueueNDRangeKernel(m_searchKernel, cl::NullRange, m_globalWorkSize, m_workgroupSize);
+			} else {
+				m_searchKernel.setArg(m_kernelArgs.m_searchBufferArg, m_searchBuffer[buf]);
 				m_asmSearchKernel.setArg(m_kernelArgs.m_startNonceArg, startNonce);
 				m_queue.enqueueNDRangeKernel(m_asmSearchKernel, cl::NullRange, m_globalWorkSize, m_workgroupSize);
 			}
-			else {
-				m_searchKernel.setArg(3, startNonce);
-				m_queue.enqueueNDRangeKernel(m_searchKernel, cl::NullRange, m_globalWorkSize, m_workgroupSize);
+
+			// A kernel is running, so we push it into the pending list 
+			pending.push({ startNonce, buf });
+			buf = (buf + 1) % c_bufferCount; // Setup for the next iteration of the loop (which will use buf + 1)
+			startNonce += m_globalWorkSize;
+
+			// if we've filled the pending queue, then we perform a
+			// read from the GPU (we block, so this can take a bit of time)
+			if(pending.size() == c_bufferCount) {
+				pending_batch const& batch = pending.front();
+
+				// Map the result memory (this blocks)
+				uint32_t* results = (uint32_t*)m_queue.enqueueMapBuffer(
+										m_searchBuffer[batch.buf], 
+										true, 
+										CL_MAP_READ, 
+										0, 
+										(1 + c_maxSearchResults) * sizeof(uint32_t));
+				// buffer is of the form [numSolutions, sol0, sol1, ... ]
+				unsigned num_found = min<unsigned>(results[0], c_maxSearchResults);
+
+				for (unsigned i = 0; i != num_found; ++i) {
+					uint64_t solNonce = batch.startNonce + results[i + 1];
+					report(solNonce, current);
+				}
+				// unmap the buffer
+				m_queue.enqueueUnmapMemObject(m_searchBuffer[batch.buf], results);
+
+				// reset search buffer if we're still going
+				if (num_found)
+					m_queue.enqueueWriteBuffer(m_searchBuffer[batch.buf], true, 0, 4, &c_zero);
+
+				// pop this fella out of the queue
+				pending.pop();
 			}
 
-			// Report results while the kernel is running.
-			// It takes some time because ethash must be re-evaluated on CPU.
-			if (nonce != 0)
-				report(nonce, current);
-
-			// Report hash count
 			addHashCount(m_globalWorkSize);
 
 			// Check if we should stop.
@@ -707,10 +739,13 @@ bool CLMiner::init(const h256& seed)
 			if (m_kernelArgs.m_dagSize128Arg > 0) 
 				m_asmSearchKernel.setArg(m_kernelArgs.m_dagSize128Arg, dagSize128);
 		}
-
+		
 		// create mining buffers
-		ETHCL_LOG("Creating mining buffer");
-		m_searchBuffer = cl::Buffer(m_context, CL_MEM_WRITE_ONLY, (c_maxSearchResults + 1) * sizeof(uint32_t));
+		for (unsigned i = 0; i != c_bufferCount; ++i)
+		{
+			ETHCL_LOG("Creating mining buffer " << i);
+			m_searchBuffer[i] = cl::Buffer(m_context, CL_MEM_WRITE_ONLY, (c_maxSearchResults + 1) * sizeof(uint32_t));
+		}
 
 		cllog << "Generating DAG";
 
