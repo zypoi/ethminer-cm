@@ -7,7 +7,6 @@
 #include <libethash/internal.h>
 #include "CLMiner_kernel.h"
 
-#include <boost/regex.hpp>
 #include <json/json.h>
 
 using namespace dev;
@@ -406,12 +405,10 @@ bool CLMiner::loadBinaryKernel(string platform, cl::Device device, uint32_t dagS
 	for (auto itr = root.begin(); itr != root.end(); itr++)
 	{
 		auto key = itr.key();
-		cllog << key;
 		
 		string dkey = key.asString();
-		boost::regex expr(dkey);
 
-		if(boost::regex_match(device_name, expr)) {
+		if(dkey == device) {
 			Json::Value droot = root[dkey];
 			std::ifstream kernel_file; 
 
