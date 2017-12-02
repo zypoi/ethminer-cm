@@ -408,7 +408,7 @@ bool CLMiner::loadBinaryKernel(string platform, cl::Device device, uint32_t dagS
 		
 		string dkey = key.asString();
 
-		if(dkey == device) {
+		if(dkey == device_name) {
 			Json::Value droot = root[dkey];
 			std::ifstream kernel_file; 
 
