@@ -215,12 +215,12 @@ void CLMiner::workLoop()
 			
 			// Setup output buffer for this run, as well as the starting nonce
 			// then execute the kernel
-			if(m_useAsmKernel) {
-				m_asmSearchKernel.setArg(0, m_searchBuffer[buf]);
-				m_asmSearchKernel.setArg(3, startNonce);
+			if(!m_useAsmKernel) {
+				m_searchKernel.setArg(0, m_searchBuffer[buf]);
+				m_searchKernel.setArg(3, startNonce);
 				m_queue.enqueueNDRangeKernel(m_searchKernel, cl::NullRange, m_globalWorkSize, m_workgroupSize);
 			} else {
-				m_searchKernel.setArg(m_kernelArgs.m_searchBufferArg, m_searchBuffer[buf]);
+				m_asmSearchKernel.setArg(m_kernelArgs.m_searchBufferArg, m_searchBuffer[buf]);
 				m_asmSearchKernel.setArg(m_kernelArgs.m_startNonceArg, startNonce);
 				m_queue.enqueueNDRangeKernel(m_asmSearchKernel, cl::NullRange, m_globalWorkSize, m_workgroupSize);
 			}
