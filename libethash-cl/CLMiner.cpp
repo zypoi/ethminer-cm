@@ -260,17 +260,20 @@ void CLMiner::workLoop()
 				pending.pop();
 			}
 
-			UniqueGuard l(x_all);
-			addHashCount(m_globalWorkSize);
-
-			// Check if we should stop.
-			if (shouldStop())
+			// Force scope
 			{
-				// Make sure the last buffer write has finished --
-				// it reads local variable.
-				m_queue.finish();
-				break;
-			}
+				UniqueGuard l(x_all);
+				addHashCount(m_globalWorkSize);
+
+				// Check if we should stop.
+				if (shouldStop())
+				{
+					// Make sure the last buffer write has finished --
+					// it reads local variable.
+					m_queue.finish();
+					break;
+				}
+			} // guard dies when out of scope
 		}
 	}
 	catch (cl::Error const& _e)
