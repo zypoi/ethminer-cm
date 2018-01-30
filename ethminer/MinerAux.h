@@ -59,7 +59,6 @@
 using namespace std;
 using namespace dev;
 using namespace dev::eth;
-using namespace boost::algorithm;
 
 
 class BadArgument: public Exception {};
@@ -102,7 +101,7 @@ public:
 			m_farmURL = argv[++i];
 			m_activeFarmURL = m_farmURL;
 		}
-		else if ((arg == "-FF" || arg == "-FS" || arg == "--farm-failover" || arg == "--stratum-failover") && i + 1 < argc)
+		else if ((arg == "-FF" || arg == "-SF" || arg == "-FS" || arg == "--farm-failover" || arg == "--stratum-failover") && i + 1 < argc)
 		{
 			string url = argv[++i];
 
@@ -244,6 +243,10 @@ public:
 		{
 			m_report_stratum_hashrate = true;
 		}
+		else if ((arg == "-HWMON") && i + 1 < argc)
+		{
+			m_show_hwmonitors = true;
+		}
 
 #endif
 #if API_CORE
@@ -286,7 +289,7 @@ public:
 				BOOST_THROW_EXCEPTION(BadArgument());
 			}
 		}
-		else if(arg == "--cl-threads-per-hash" && i + 1 < argc) {
+		else if(arg == "--cl-parallel-hash" && i + 1 < argc) {
 			try {
 				m_openclThreadsPerHash = stol(argv[++i]);
 				if(m_openclThreadsPerHash != 1 && m_openclThreadsPerHash != 2 &&
@@ -579,7 +582,7 @@ public:
 			<< "	--farm-retries <n> Number of retries until switch to failover (default: 3)" << endl
 #if ETH_STRATUM
 			<< "	-S, --stratum <host:port>  Put into stratum mode with the stratum server at host:port" << endl
-			<< "	-FS, --failover-stratum <host:port>  Failover stratum server at host:port" << endl
+			<< "	-SF, --stratum-failover <host:port>  Failover stratum server at host:port" << endl
 			<< "    -O, --userpass <username.workername:password> Stratum login credentials" << endl
 			<< "    -FO, --failover-userpass <username.workername:password> Failover stratum login credentials (optional, will use normal credentials when omitted)" << endl
 			<< "    --work-timeout <n> reconnect/failover after n seconds of working on the same (stratum) job. Defaults to 180. Don't set lower than max. avg. block time" << endl
@@ -589,6 +592,7 @@ public:
 			<< "        1: eth-proxy compatible: dwarfpool, f2pool, nanopool (required for hashrate reporting to work with nanopool)" << endl
 			<< "        2: EthereumStratum/1.0.0: nicehash" << endl
 			<< "    -RH, --report-hashrate Report current hashrate to pool (please only enable on pools supporting this)" << endl
+			<< "    -HWMON Displays gpu temp and fan percent." << endl
 			<< "    -SE, --stratum-email <s> Email address used in eth-proxy (optional)" << endl
 			<< "    --farm-recheck <n>  Leave n ms between checks for changed work (default: 500). When using stratum, use a high value (i.e. 2000) to get more stable hashrate output" << endl
 #endif
@@ -616,7 +620,7 @@ public:
 #if ETH_ETHASHCL
 			<< "    --cl-local-work Set the OpenCL local work size. Default is " << CLMiner::c_defaultLocalWorkSize << endl
 			<< "    --cl-global-work Set the OpenCL global work size as a multiple of the local work size. Default is " << CLMiner::c_defaultGlobalWorkSizeMultiplier << " * " << CLMiner::c_defaultLocalWorkSize << endl
-			<< "    --cl-threads-per-hash <1 2 ..8> Define how many threads to associate per hash. Default=8" << endl
+			<< "    --cl-parallel-hash <1 2 ..8> Define how many threads to associate per hash. Default=8" << endl
 #endif
 #if ETH_ETHASHCUDA
 			<< "    --cuda-block-size Set the CUDA block work size. Default is " << toString(ethash_cuda_miner::c_defaultBlockSize) << endl
@@ -807,11 +811,15 @@ private:
 		
 		f.setSealers(sealers);
 		
-		
 		if (_m == MinerType::CL)
 			f.start("opencl", false);
 		else if (_m == MinerType::CUDA)
 			f.start("cuda", false);
+		else if (_m == MinerType::Mixed) {
+			f.start("cuda", false);
+			f.start("opencl", true);
+		}
+
 		WorkPackage current;
 		std::mutex x_current;
 
@@ -827,10 +835,10 @@ private:
 				});
 				for (unsigned i = 0; !completed; ++i)
 				{
-					auto mp = f.miningProgress();
+					auto mp = f.miningProgress(m_show_hwmonitors);
 					if (current)
 					{
-						minelog << mp << f.getSolutionStats();
+						minelog << mp << f.getSolutionStats() << f.farmLaunchedFormatted();
 #if ETH_DBUS
 						dbusint.send(toString(mp).data());
 #endif
@@ -866,19 +874,23 @@ private:
 					}
 					this_thread::sleep_for(chrono::milliseconds(_recheckPeriod));
 				}
-				cnote << "Solution found; Submitting to" << _remote << "...";
-				cnote << "  Nonce:" << solution.nonce;
-				cnote << "  headerHash:" << solution.headerHash.hex();
-				cnote << "  mixHash:" << solution.mixHash.hex();
 				if (EthashAux::eval(solution.seedHash, solution.headerHash, solution.nonce).value < solution.boundary)
 				{
 					bool ok = prpc->eth_submitWork("0x" + toHex(solution.nonce), "0x" + toString(solution.headerHash), "0x" + toString(solution.mixHash));
 					if (ok) {
-						cnote << EthLime << "B-) Submitted and accepted." << EthReset;
+						cnote << "Solution found; Submitted to" << _remote << "...";
+						cnote << "  Nonce:" << solution.nonce;
+						cnote << "  headerHash:" << solution.headerHash.hex();
+						cnote << "  mixHash:" << solution.mixHash.hex();
+						cnote << EthLime << "Accepted." << EthReset;
 						f.acceptedSolution(false);
 					}
 					else {
-						cwarn << ":-( Not accepted.";
+						cwarn << "Solution found; Submitted to" << _remote << "...";
+						cwarn << "  Nonce:" << solution.nonce;
+						cwarn << "  headerHash:" << solution.headerHash.hex();
+						cwarn << "  mixHash:" << solution.mixHash.hex();
+						cwarn << "Not accepted.";
 						f.rejectedSolution(false);
 					}
 					//exit(0);
@@ -976,12 +988,12 @@ private:
 
 			while (client.isRunning())
 			{
-				auto mp = f.miningProgress();
+				auto mp = f.miningProgress(m_show_hwmonitors);
 				if (client.isConnected())
 				{
 					if (client.current())
 					{
-						minelog << mp << f.getSolutionStats();
+						minelog << mp << f.getSolutionStats() << f.farmLaunchedFormatted();
 #if ETH_DBUS
 						dbusint.send(toString(mp).data());
 #endif
@@ -1025,7 +1037,7 @@ private:
 
 			while (client.isRunning())
 			{
-				auto mp = f.miningProgress();
+				auto mp = f.miningProgress(m_show_hwmonitors);
 				if (client.isConnected())
 				{
 					if (client.current())
@@ -1102,6 +1114,7 @@ private:
 	unsigned m_defaultStratumFarmRecheckPeriod = 2000;
 	bool m_farmRecheckSet = false;
 	int m_worktimeout = 180;
+	bool m_show_hwmonitors = false;
 #if API_CORE
 	int m_api_port = 0;
 #endif	
