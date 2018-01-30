@@ -10,8 +10,8 @@ set(HUNTER_CONFIGURATION_TYPES Release)
 set(HUNTER_CACHE_SERVERS "https://github.com/ethereum/hunter-cache")
 include(HunterGate)
 HunterGate(
-    URL "https://github.com/ruslo/hunter/archive/v0.19.86.tar.gz"
-    SHA1 "aafb99b93d466f963d53a39271f20d5074996cb0"
+	URL "https://github.com/ruslo/hunter/archive/v0.19.213.tar.gz"
+	SHA1 "59b2b880178bdc1e9cce83f279f1d88feefa07a2"
 	LOCAL
 )
 
@@ -41,7 +41,7 @@ endif()
 
 
 project(ethminer)
-set(PROJECT_VERSION 0.12.0rc1)
+set(PROJECT_VERSION 0.13.0rc3)
 
 # link_directories interprate relative paths with respect to CMAKE_CURRENT_SOURCE_DIR
 cmake_policy(SET CMP0015 NEW)
@@ -145,6 +145,7 @@ createBuildInfo()
 
 add_subdirectory(libdevcore)
 add_subdirectory(libethash)
+add_subdirectory(libhwmon)
 if (ETHASHCL)
 	add_subdirectory(libethash-cl)
 endif ()

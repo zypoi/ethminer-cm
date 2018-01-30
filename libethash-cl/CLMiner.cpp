@@ -337,7 +337,7 @@ unsigned CLMiner::getNumDevices()
 
 void CLMiner::listDevices()
 {
-	string outString ="\nListing OpenCL devices.\nFORMAT: [deviceID] deviceName\n";
+	string outString ="\nListing OpenCL devices.\nFORMAT: [platformID] [deviceID] deviceName\n";
 	unsigned int i = 0;
 
 	vector<cl::Platform> platforms = getPlatforms();
@@ -345,10 +345,11 @@ void CLMiner::listDevices()
 		return;
 	for (unsigned j = 0; j < platforms.size(); ++j)
 	{
+		i = 0;
 		vector<cl::Device> devices = getDevices(platforms, j);
 		for (auto const& device: devices)
 		{
-			outString += "[" + to_string(i) + "] " + device.getInfo<CL_DEVICE_NAME>() + "\n";
+			outString += "[" + to_string(j) + "] [" + to_string(i) + "] " + device.getInfo<CL_DEVICE_NAME>() + "\n";
 			outString += "\tCL_DEVICE_TYPE: ";
 			switch (device.getInfo<CL_DEVICE_TYPE>())
 			{
@@ -427,6 +428,29 @@ bool CLMiner::configureGPU(
 	return false;
 }
 
+HwMonitor CLMiner::hwmon()
+{
+	HwMonitor hw;
+	unsigned int tempC = 0, fanpcnt = 0;
+	if (nvmlh) {
+		wrap_nvml_get_tempC(nvmlh, index, &tempC);
+		wrap_nvml_get_fanpcnt(nvmlh, index, &fanpcnt);
+	}
+	if (adlh) {
+		wrap_adl_get_tempC(adlh, index, &tempC);
+		wrap_adl_get_fanpcnt(adlh, index, &fanpcnt);
+	}
+#if defined(__linux)
+	if (sysfsh) {
+		wrap_amdsysfs_get_tempC(sysfsh, index, &tempC);
+		wrap_amdsysfs_get_fanpcnt(sysfsh, index, &fanpcnt);
+	}
+#endif
+	hw.tempC = tempC;
+	hw.fanP = fanpcnt;
+	return hw;
+}
+
 
 bool CLMiner::init(const h256& seed)
 {
@@ -446,17 +470,28 @@ bool CLMiner::init(const h256& seed)
 		ETHCL_LOG("Platform: " << platformName);
 
 		int platformId = OPENCL_PLATFORM_UNKNOWN;
-		if (platformName == "NVIDIA CUDA")
 		{
-			platformId = OPENCL_PLATFORM_NVIDIA;
-		}
-		else if (platformName == "AMD Accelerated Parallel Processing")
-		{
-			platformId = OPENCL_PLATFORM_AMD;
-		}
-		else if (platformName == "Clover")
-		{
-			platformId = OPENCL_PLATFORM_CLOVER;
+			// this mutex prevents race conditions when calling the adl wrapper since it is apparently not thread safe
+			static std::mutex mtx;
+			std::lock_guard<std::mutex> lock(mtx);
+
+			if (platformName == "NVIDIA CUDA")
+			{
+				platformId = OPENCL_PLATFORM_NVIDIA;
+				nvmlh = wrap_nvml_create();
+			}
+			else if (platformName == "AMD Accelerated Parallel Processing")
+			{
+				platformId = OPENCL_PLATFORM_AMD;
+				adlh = wrap_adl_create();
+#if defined(__linux)
+				sysfsh = wrap_amdsysfs_create();
+#endif
+			}
+			else if (platformName == "Clover")
+			{
+				platformId = OPENCL_PLATFORM_CLOVER;
+			}
 		}
 
 		// get GPU device of the default platform

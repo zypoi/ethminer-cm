@@ -31,8 +31,6 @@
 #include <libethcore/Miner.h>
 #include <libethcore/BlockHeader.h>
 
-using namespace boost::asio;
-
 namespace dev
 {
 
@@ -137,17 +135,19 @@ public:
 	 */
 	void stop()
 	{
-		Guard l(x_minerWork);
-		m_miners.clear();
-		m_isMining = false;
-
-		if (p_hashrateTimer) {
-			p_hashrateTimer->cancel();
+		{
+			Guard l(x_minerWork);
+			m_miners.clear();
+			m_isMining = false;
 		}
 
 		m_io_service.stop();
 		m_serviceThread.join();
-		p_hashrateTimer = nullptr;
+
+		if (p_hashrateTimer) {
+			p_hashrateTimer->cancel();
+			p_hashrateTimer = nullptr;
+		}
 	}
 
 	void collectHashRate()
@@ -217,7 +217,7 @@ public:
 	 * @brief Get information on the progress of mining this work package.
 	 * @return The progress with mining so far.
 	 */
-	WorkingProgress const& miningProgress() const
+	WorkingProgress const& miningProgress(bool hwmon = false) const
 	{
 		WorkingProgress p;
 		p.ms = 0;
@@ -225,8 +225,9 @@ public:
 		{
 			Guard l2(x_minerWork);
 			for (auto const& i : m_miners) {
-				(void) i; // unused
 				p.minersHashes.push_back(0);
+				if (hwmon)
+					p.minerMonitors.push_back(i->hwmon());
 			}
 		}
 
@@ -287,6 +288,24 @@ public:
 
 	WorkPackage work() const { Guard l(x_minerWork); return m_work; }
 
+	std::chrono::steady_clock::time_point farmLaunched() {
+		return m_farm_launched;
+	}
+
+	string farmLaunchedFormatted() {
+		auto d = std::chrono::steady_clock::now() - m_farm_launched;
+		int hsize = 3;
+		auto hhh = std::chrono::duration_cast<std::chrono::hours>(d);
+		if (hhh.count() < 100) {
+			hsize = 2;
+		}
+		d -= hhh;
+		auto mm = std::chrono::duration_cast<std::chrono::minutes>(d);
+		std::ostringstream stream;
+		stream << "Time: " << std::setfill('0') << std::setw(hsize) << hhh.count() << ':' << std::setfill('0') << std::setw(2) << mm.count();
+		return stream.str();
+	}
+
 private:
 	/**
 	 * @brief Called from a Miner to note a WorkPackage has a solution.
@@ -309,6 +328,8 @@ private:
 	mutable Mutex x_progress;
 	mutable WorkingProgress m_progress;
 
+	mutable Mutex x_hwmons;
+
 	SolutionFound m_onSolutionFound;
 	MinerRestart m_onMinerRestart;
 
@@ -324,7 +345,7 @@ private:
 	std::vector<WorkingProgress> m_lastProgresses;
 
 	mutable SolutionStats m_solutionStats;
-
+	std::chrono::steady_clock::time_point m_farm_launched = std::chrono::steady_clock::now();
 }; 
 
 }
